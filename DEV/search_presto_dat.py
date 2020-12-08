@@ -10,6 +10,7 @@ from psrdynspec.modules.normalize_Nd import normalize_stdnormal
 from psrdynspec.plotting.config import *
 from psrdynspec.plotting.fft_plot import fft_gridplot
 from psrdynspec.plotting.fold_plot import subplots_metric_profile, plot_foldedprofile_rotations
+from riptide.running_median import fast_running_median
 
 from astropy.stats import sigma_clip
 import os, time
@@ -20,7 +21,10 @@ dict = read_config('search_presto_dat.cfg')
 
 # Data
 if (dict['DM']==''):
-    dict['DM'] = 0.0
+    if 'DM' in dict['dat_file']:
+        dict['DM'] = float(dict['dat_file'].split('DM')[1].split('.dat')[0])
+    else:
+        dict['DM'] = 0.0
 if (dict['low_freq_data']==''):
     dict['low_freq_data'] = None
 if (dict['high_freq_data']==''):
@@ -82,6 +86,11 @@ if (dict['metric']==''):
     dict['metric'] = 'reducedchisquare'
 if (dict['do_fold_rotations']==''):
     dict['do_fold_rotations'] = False
+# Write to disk.
+if (dict['write_to_disk']==''):
+    dict['write_to_disk'] = False
+if (dict['NPZ_DIR']==''):
+    dict['NPZ_DIR'] = dict['DAT_DIR']
 ############################################################################
 # Plotting labels
 fourierfreq_units = 'Hz'
@@ -94,7 +103,7 @@ elif (dict['low_freq_data'] is not None) and (dict['high_freq_data'] is None):
 elif (dict['low_freq_data'] is None) and (dict['high_freq_data'] is not None):
     radiofreq_annotation = '%.2f GHz'% (dict['high_freq_data'])
 else:
-    freq_annotation = ''
+    radiofreq_annotation = ''
 # Timeseries unit
 if dict['do_normalize']:
     timeseries_unit = 'normalized'
@@ -145,7 +154,7 @@ if dict['do_blkavg']:
 if dict['do_detrend']:
     print('Detrending time series')
     window_length = int(2*((dict['window_length_time']/t_resol)//2)+1) # Window length (odd number of samples)
-    trend = savgol_lowpass(dedisp_ts,window_length,dict['poly_degree'])
+    trend = fast_running_median(dedisp_ts, window_length, 101)
     dedisp_ts = dedisp_ts - trend
 
 # Normalize the time series to zero median and unit variance.
@@ -160,13 +169,18 @@ if dict['do_clipping']:
     std = np.std(clip_array)
     threshold = median+dict['sigmaclip']*std
     print('Clipping time series values less than %.2f'% (threshold))
-    dedisp_ts = np.ma.masked_less(dedisp_ts, threshold)
+    thresholded_ts = np.ma.masked_less(dedisp_ts, threshold)
+    # Replace masked entried with zeros and add Gaussian random noise.
+    dedisp_ts = np.ma.filled(thresholded_ts,0.) + 1.e-2*std*np.random.randn(len(times))
+    dict['basename'] = dict['basename'].split('_DM')[0] + '_clipped' + '_DM%.1f'% (dict['DM'])
+else:
+    thresholded_ts = dedisp_ts
 
 # FFT of time series.
 if dict['do_FFT']:
     if dict['Nfft'] is None:
         dict['Nfft'] = len(dedisp_ts)
-    frequencies, power_spectrum, peak_indices, peak_freqs, peak_powerspec = fft1d_mask(np.ma.filled(dedisp_ts,0.0), dict['Nfft'], t_resol, dict['outliers_only'], 'linear', 5, dict['N_sigma'])
+    frequencies, power_spectrum, peak_indices, peak_freqs, peak_powerspec = fft1d_mask(dedisp_ts, dict['Nfft'], t_resol, dict['outliers_only'], 'linear', 5, dict['N_sigma'])
     # Sort peak frequencies in decreasing order of their significance.
     peak_ordering = np.argsort(peak_powerspec)[::-1]
     peak_indices = peak_indices[peak_ordering]
@@ -174,29 +188,32 @@ if dict['do_FFT']:
     peak_powerspec = peak_powerspec[peak_ordering]
     print('10 largest FFT peaks are at fourier frequencies (Hz):')
     print(np.round(peak_freqs[:10],4))
-    fft_gridplot(times, dedisp_ts, frequencies, power_spectrum, dict['max_fourierfreq_plot'], timeseries_unit, powerspec_unit, dict['DM'], radiofreq_annotation, special_fourierfreq, dict['basename'], dict['OUTPUT_DIR'], dict['show_plot'], dict['plot_format'])
+    fft_gridplot(times, thresholded_ts, frequencies, power_spectrum, dict['max_fourierfreq_plot'], timeseries_unit, powerspec_unit, dict['DM'], radiofreq_annotation, special_fourierfreq, dict['basename'], dict['OUTPUT_DIR'], dict['show_plot'], dict['plot_format'])
 
 # Time-domain folding
 if dict['do_timeseries_fold']:
-    if np.ma.is_masked(dedisp_ts):
-        fold_basename = dict['basename']+'_noisemasked'
-        modified_dedisp_ts = np.ma.filled(dedisp_ts,0.0) + 0.05*np.random.randn(len(dedisp_ts))
-    else:
-        modified_dedisp_ts = dedisp_ts
-        fold_basename = dict['basename']
-    nsamp = len(modified_dedisp_ts)
+    nsamp = len(dedisp_ts)
     plan = ProcessingPlan.create(nsamp, t_resol, dict['bins_min'], dict['P_min'], dict['P_max'])
     print(plan)
-    metric_values, global_metricmax_index, global_metricmax, best_period, optimal_bins, optimal_dsfactor = execute_plan(modified_dedisp_ts, times, plan, dict['metric'])
-    integrated_ts = blockavg1d(modified_dedisp_ts,optimal_dsfactor)
+    metric_values, global_metricmax_index, global_metricmax, best_period, optimal_bins, optimal_dsfactor = execute_plan(dedisp_ts, times, plan, dict['metric'])
+    integrated_ts = blockavg1d(dedisp_ts,optimal_dsfactor)
     integrated_times = blockavg1d(times,optimal_dsfactor)
     # Fold time series at best period.
     profile, phasebins = fold_ts(integrated_ts, integrated_times, best_period, optimal_bins)
-    subplots_metric_profile(plan.periods, metric_values, dict['metric'], phasebins, profile, best_period, fold_basename, dict['OUTPUT_DIR'], dict['show_plot'])
+    subplots_metric_profile(plan.periods, metric_values, dict['metric'], phasebins, profile, best_period, dict['basename'], dict['OUTPUT_DIR'], dict['show_plot'])
     # Plot folded timeseries per rotation period that maximizes the chosen metric.
     if dict['do_fold_rotations']:
         profile_rotations, counts_perrot_phibin, phibins = fold_rotations_ts(integrated_ts, integrated_times, best_period, optimal_bins)
-        plot_foldedprofile_rotations(profile_rotations,counts_perrot_phibin,phibins,fold_basename,dict['OUTPUT_DIR'],dict['show_plot'],low_phase_limit=0.0,high_phase_limit=1.0,rot_spacing = 1.0, normalization = 'quarterrotmax')
+        plot_foldedprofile_rotations(profile_rotations,counts_perrot_phibin,phibins,best_period,dict['basename'],dict['OUTPUT_DIR'],dict['show_plot'],low_phase_limit=0.0,high_phase_limit=1.0,rot_spacing = 1.0, normalization = 'quarterrotmax')
+
+if dict['write_to_disk']:
+    if not os.path.isdir(dict['NPZ_DIR']):
+        os.makedirs(dict['NPZ_DIR'])
+    print('Writing processed dedispersed timeseries to disk.')
+    npz_file = dict['NPZ_DIR'] + dict['basename']
+    save_array = [times, dedisp_ts]
+    save_keywords = ['Time (s)','Dedispersed timeseries']
+    np.savez(npz_file, **{name:value for name,value in zip(save_keywords,save_array)})
 
 # Calculate total run time for the code.
 prog_end_time = time.time()
