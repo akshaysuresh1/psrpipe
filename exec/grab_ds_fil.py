@@ -132,6 +132,7 @@ def myexecute(hotpotato):
     # Produce imshow plot of data.
     if not os.path.isdir(hotpotato['OUTPUT_DIR']):
         os.makedirs(hotpotato['OUTPUT_DIR'])
+    # TO DO: Incorporate labeling of flagged channels in dynamic spectrum plot.        
     plot_ds(data,times[0],times[-1],freqs_GHz[0],freqs_GHz[-1],'s','GHz','arbitrary units',hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],vmin=-2*np.std(data),vmax=5*np.std(data),log_colorbar=False)
 
     # Update header to reflect data properties.

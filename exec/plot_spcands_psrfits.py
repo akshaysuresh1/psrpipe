@@ -26,7 +26,7 @@ import os, time, sys, glob
 from argparse import ArgumentParser
 #########################################################################
 # Execute call for processors.
-def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank):
+def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank):
     DM = cand_DMs[cand_index] # DM (pc/cc) of single pulse candidate
     cand_time = cand_dedisp_times[cand_index] # Candidate time (s)
     print('RANK %d: Working on candidate at t = %.2f s and DM = %.2f pc/cc'% (rank, cand_time, DM))
@@ -97,17 +97,19 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int
     dedisp_ds, dedisp_times, dedisp_timeseries = dedisperse_ds(data, freqs_GHz_smoothed, DM, freqs_GHz_smoothed[-1], freqs_GHz_smoothed[0], times[1]-times[0], times[0])
 
     # Candidate verification plot
-    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'])
+    mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
+    mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], mask_chans=mask_chans, vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'])
 
     # Write smoothed dynamic spectrum to disk as .npz file.
     if hotpotato['write_npz']:
-        npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.3fto%.3f_freqs%.2fto%.2f'% (times[0], times[-1], freqs_GHz[0], freqs_GHz[-1])
-        write_npz_data(data, freqs_GHz_smoothed, times, npz_filename)
+        npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.2f_DM%.1f'% (cand_time, DM)
+        write_npz_data(data, freqs_GHz_smoothed, times, mask_chans, npz_filename)
 
 # Write dynamic spectrum and relevant metadata to disk as .npz file.
-def write_npz_data(data, freqs_GHz, times, filename):
-    save_array = [data, freqs_GHz, times]
-    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)']
+def write_npz_data(data, freqs_GHz, times, mask_chans, filename):
+    save_array = [data, freqs_GHz, times, mask_chans]
+    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)', 'Channel mask']
     np.savez(filename,**{name:value for name, value in zip(save_keywords, save_array)})
 
 #  Filter single pulse candidates.
@@ -247,13 +249,14 @@ def __MPI_MAIN__(parser):
         if nproc==1:
             for i in range(len(select_indices)):
                 cand_index = select_indices[i]
-                myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank)
+                myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank)
+                break
         else:
             # Distribute candidates evenly among child processors.
             indices_dist_list = np.array_split(select_indices,nproc-1)
             # Send data to child processors.
             for indx in range(1,nproc):
-                comm.send((indices_dist_list[indx-1], cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato), dest=indx, tag=indx)
+                comm.send((indices_dist_list[indx-1], cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato), dest=indx, tag=indx)
             comm.Barrier() # Wait for all child processors to receive sent call.
             # Receive Data from child processors after execution.
             comm.Barrier()
@@ -265,12 +268,12 @@ def __MPI_MAIN__(parser):
         print('FINISHING RANK 0')
     else:
         # Recieve data from parent processor.
-        indx_vals, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato = comm.recv(source=0, tag=rank)
+        indx_vals, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato = comm.recv(source=0, tag=rank)
         comm.Barrier()
         print('STARTING RANK: ',rank)
         for i in range(len(indx_vals)):
             cand_index = indx_vals[i]
-            myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank)
+            myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, hotpotato, rank)
         print('FINISHING RANK: ',rank)
         comm.Barrier()
         # Send completed status back to parent processor.

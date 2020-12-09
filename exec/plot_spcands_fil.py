@@ -113,12 +113,12 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int
     # Write smoothed dynamic spectrum to disk as .npz file.
     if hotpotato['write_npz']:
         npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.2f_DM%.1f'% (cand_time, DM)
-        write_npz_data(data, freqs_GHz_smoothed, times, npz_filename)
+        write_npz_data(data, freqs_GHz_smoothed, times, mask_chans, npz_filename)
 
 # Write dynamic spectrum and relevant metadata to disk as .npz file.
-def write_npz_data(data, freqs_GHz, times, filename):
-    save_array = [data, freqs_GHz, times]
-    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)']
+def write_npz_data(data, freqs_GHz, times, mask_chans, filename):
+    save_array = [data, freqs_GHz, times, mask_chans]
+    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)', 'Channel mask']
     np.savez(filename,**{name:value for name, value in zip(save_keywords, save_array)})
 
 #  Filter single pulse candidates.
