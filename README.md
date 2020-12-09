@@ -15,22 +15,22 @@ Each .py script also reports run times on the terminal at the end of execution. 
 2. ```grab_ds_fil.py```: Plot smoothed, RFI-masked dynamic spectrum of a chunk of filterbank data.
 2. ```grab_ds_psrfits.py```: Plot smoothed, RFI-masked dynamic spectrum of a chunk of PSRFITS data.
 
-Program run syntax:
+Program run syntax: <br>
 ```python <path to executable file> -i <path to config file of inputs>``` <br>
 The ```-i``` flag specifies the input configuration file to be read by the executable file.
 
-Example call:
+Example call: <br>
 ```python exec/bandpass.py -i config/bandpass.cfg``` <br>
 
 ## MPI-enabled executable scripts:
 1. ```plot_spcands_fil.py```: Plot dynamic spectra of single pulse candidates identified in filterbank data.  
 2. ```plot_spcands_psrfits.py```: Plot dynamic spectra of single pulse candidates identified in PSRFITS data.
 
-Program run syntax:
+Program run syntax: <br>
 ```mpirun -n <nproc> python <path to executable file> -i <path to config file of inputs>``` <br>
 Default execution assumes operation on a single processor. If multiple processors are called, a parent-child MPI framework is invoked. Within this model, one processor is designated as a parent processor, whereas the remaining processors are classified as child processors. The parent distributes tasks evenly and collates outputs from the child processors.
 
-Example call:
+Example call: <br>
 ```mpirun -n 4 python exec/plot_spcands_fil.py -i config/plot_spcands_fil.cfg```
 
 ## Ongoing development
