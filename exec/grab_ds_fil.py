@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 '''
+HELLO
 Grab a time chunk of data from a filterbank file and perform the following tasks.
 
 1. Read raw data from a filterbank file.
