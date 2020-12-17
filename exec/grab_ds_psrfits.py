@@ -112,11 +112,6 @@ def myexecute(hotpotato):
     if hotpotato['smoothing_method']!='Blockavg2D':
         data, freqs_GHz, times = smooth_master(data,'Blockavg2D',hotpotato['convolution_method'],hotpotato['kernel_size_freq_chans'],hotpotato['kernel_size_time_samples'],freqs_GHz,times)
 
-    # Remove zerodm signal.
-    if hotpotato['remove_zerodm']:
-        print('Removing zerodm component')
-        data = data - np.mean(data,axis=0)
-
     # Remove residual spectral trend.
     print('Removing residual spectral trend')
     data = data - np.median(data,axis=1)[:,None]
@@ -124,16 +119,22 @@ def myexecute(hotpotato):
     # Produce imshow plot of data.
     if not os.path.isdir(hotpotato['OUTPUT_DIR']):
         os.makedirs(hotpotato['OUTPUT_DIR'])
-    # TO DO: Incorporate labeling of flagged channels in dynamic spectrum plot.        
-    plot_ds(data,times[0],times[-1],freqs_GHz[0],freqs_GHz[-1],'s','GHz','arbitrary units',hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],vmin=-2.0*np.std(data),vmax=5.0*np.std(data),log_colorbar=False,cmap=hotpotato['cmap'])
+    mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
+    mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+    plot_ds(data,times,freqs_GHz,hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],time_unit='s',freq_unit='GHz',flux_unit='arbitrary units',vmin=np.mean(data)-2*np.std(data),vmax=np.mean(data)+5*np.std(data),log_colorbar=False,cmap=hotpotato['cmap'],mask_chans=mask_chans)
 
     # Write dynamic spectrum to disk as .npz file.
-    npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.3fto%.3f_freqs%.2fto%.2f'% (times[0], times[-1], freqs_GHz[0], freqs_GHz[-1])
-    save_array = [data, freqs_GHz, times, hdr]
-    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)', 'Header']
-    np.savez(npz_filename,**{name:value for name, value in zip(save_keywords, save_array)})
+    if hotpotato['do_write_npz']:
+        write_npz(data, freqs_GHz, times, mask_chans, hotpotato)
 
     return data, freqs_GHz, times, hdr
+
+# Write final data products to disk as .npz file.
+def write_npz(data, freqs_GHz, times, mask_chans, hotpotato):
+    npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.3fto%.3f_freqs%.2fto%.2f'% (times[0], times[-1], freqs_GHz[0], freqs_GHz[-1])
+    save_array = [data, freqs_GHz, times, mask_chans]
+    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)', 'Channel mask']
+    np.savez(npz_filename,**{name:value for name, value in zip(save_keywords, save_array)})
 
 # Set defaults.
 def set_defaults(hotpotato):
@@ -143,6 +144,8 @@ def set_defaults(hotpotato):
         hotpotato['cmap'] = 'viridis'
     if hotpotato['show_plot']=='':
         hotpotato['show_plot'] = False
+    if hotpotato['do_write_npz']=='':
+        hotpotato['do_write_npz'] = False
     if hotpotato['pol']=='':
         hotpotato['pol'] = 0
     if hotpotato['apply_rfimask']=='':

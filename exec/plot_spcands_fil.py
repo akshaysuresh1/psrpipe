@@ -22,10 +22,12 @@ from psrdynspec.plotting.spcands_plot import plot_DMtime, spcand_verification_pl
 from mpi4py import MPI
 import numpy as np
 import os, time, sys, glob
+from scipy.signal.windows import boxcar
+from scipy.ndimage import convolve1d
 from argparse import ArgumentParser
 #########################################################################
 # Execute call for processors.
-def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank):
+def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank):
     print('RANK %d: Working on candidate at index %d'% (rank, cand_index))
     DM = cand_DMs[cand_index] # DM (pc/cc) of single pulse candidate
     cand_time = cand_dedisp_times[cand_index] # Candidate time (s)
@@ -105,6 +107,13 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int
     # Dedisperse the data at DM of candidate detection.
     dedisp_ds, dedisp_times, dedisp_timeseries = dedisperse_ds(data, freqs_GHz_smoothed, DM, freqs_GHz_smoothed[-1], freqs_GHz_smoothed[0], times[1]-times[0], times[0])
 
+    # Smooth dedispersed dynamic spectrum and dedispersed time series with a boxcar matched-filter of size "downfact" samples.
+    filter = boxcar(int(downfact)) # A uniform (boxcar) filter with a width equal to downfact
+    filter = filter/np.sum(filter) # Normalize filter to unit integral.
+    print('RANK %d: Convolving dedispersed dynamic spectrum along time with a Boxcar matched filter of width %d bins'% (rank, downfact))
+    dedisp_ds = convolve1d(dedisp_ds, filter, axis=-1) # Smoothed dedispersed dynamic spectrum
+    dedisp_timeseries = np.sum(dedisp_ds,axis=0)
+
     # Candidate verification plot
     mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
     mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
@@ -139,7 +148,7 @@ def filter_spcands(hotpotato):
         metadata.basename = hotpotato['basename']
     center_freq = metadata.lofreq + 0.5*(metadata.numchan-1)*metadata.chan_width # MHz
     # Collate single pulse candidates in specified DM range from .singlepulse files.
-    cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples = gen_singlepulse(hotpotato['low_DM_cand'],hotpotato['high_DM_cand'],singlepulse_filelist)
+    cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact = gen_singlepulse(hotpotato['low_DM_cand'],hotpotato['high_DM_cand'],singlepulse_filelist)
     # Discard candidates that belong to time spans to be excluded.
     if len(hotpotato['exc_low_times'])>0:
         for i in range(len(hotpotato['exc_low_times'])):
@@ -150,15 +159,17 @@ def filter_spcands(hotpotato):
             cand_sigma = np.delete(cand_sigma, select_indices)
             cand_dedisp_times = np.delete(cand_dedisp_times, select_indices)
             cand_dedisp_samples = np.delete(cand_dedisp_samples, select_indices)
+            cand_downfact = np.delete(cand_downfact, select_indices)
     # Apply S/N cutoff.
     print('Discarding candidates with S/N < %.2f'% (hotpotato['sigma_cutoff']))
-    cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples = apply_sigma_cutoff(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,hotpotato['sigma_cutoff'])
+    cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact = apply_sigma_cutoff(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact,hotpotato['sigma_cutoff'])
     # Remove duplicate candidates associated with the same single pulse event.
     print('Removing duplicate candidates using a time margin of %.2f ms and a DM margin of %.1f pc/cc'% (hotpotato['time_margin']*1e3, hotpotato['DM_margin']))
-    cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples, select_indices = remove_duplicates(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,hotpotato['time_margin'],hotpotato['DM_margin'])
-    plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], select_indices)
+    cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact, select_indices = remove_duplicates(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact,hotpotato['time_margin'],hotpotato['DM_margin'])
     print('Total number of unique candidates: %d'% (len(select_indices)))
-    return metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, select_indices
+    if len(select_indices)!=0:
+        plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], select_indices)
+    return metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact, select_indices
 
 # Set defaults.
 def set_defaults(hotpotato):
@@ -219,7 +230,10 @@ def __MPI_MAIN__(parser):
         if not os.path.isdir(hotpotato['OUTPUT_DIR']):
             os.makedirs(hotpotato['OUTPUT_DIR'])
         # Load information on single pulse candidates.
-        metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, select_indices = filter_spcands(hotpotato)
+        metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact, select_indices = filter_spcands(hotpotato)
+        if len(select_indices)==0:
+            print('No single pulse candidates fit the user-supplied selection criteria. Quitting program')
+            sys.exit(1)
 
         # Read header of filterbank file.
         hdr = Header(hotpotato['DATA_DIR']+'/'+hotpotato['fil_file'],file_type='filterbank') # Returns a Header object
@@ -264,7 +278,8 @@ def __MPI_MAIN__(parser):
             f = open(hotpotato['DATA_DIR']+'/'+hotpotato['fil_file'], 'rb')
             for i in range(len(select_indices)):
                 cand_index = select_indices[i]
-                myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank)
+                downfact = cand_downfact[cand_index]
+                myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank)
             f.close()
         else:
             # Distribute candidates evenly among child processors.
@@ -272,7 +287,7 @@ def __MPI_MAIN__(parser):
 
             # Send data to child processors.
             for indx in range(1,nproc):
-                comm.send((indices_dist_list[indx-1], cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato), dest=indx, tag=indx)
+                comm.send((indices_dist_list[indx-1], cand_DMs, cand_sigma, cand_dedisp_times, cand_downfact, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato), dest=indx, tag=indx)
             comm.Barrier() # Wait for all child processors to receive sent call.
             # Receive Data from child processors after execution.
             comm.Barrier()
@@ -284,13 +299,14 @@ def __MPI_MAIN__(parser):
         print('FINISHING RANK 0')
     else:
         # Recieve data from parent processor.
-        indx_vals, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato = comm.recv(source=0, tag=rank)
+        indx_vals, cand_DMs, cand_sigma, cand_dedisp_times, cand_downfact, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato = comm.recv(source=0, tag=rank)
         comm.Barrier()
         print('STARTING RANK: ',rank)
         f = open(hotpotato['DATA_DIR']+'/'+hotpotato['fil_file'], 'rb')
         for i in range(len(indx_vals)):
             cand_index = indx_vals[i]
-            myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank)
+            downfact = cand_downfact[cand_index]
+            myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, metadata, int_times, mask_zap_chans, mask_zap_chans_per_int, freqs_GHz, tot_time_samples, t_samp, chan_bw, npol, nchans, n_bytes, hdr_size, hotpotato, f, rank)
         f.close()
         print('FINISHING RANK: ',rank)
         comm.Barrier()

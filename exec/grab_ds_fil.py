@@ -132,8 +132,9 @@ def myexecute(hotpotato):
     # Produce imshow plot of data.
     if not os.path.isdir(hotpotato['OUTPUT_DIR']):
         os.makedirs(hotpotato['OUTPUT_DIR'])
-    # TO DO: Incorporate labeling of flagged channels in dynamic spectrum plot.        
-    plot_ds(data,times[0],times[-1],freqs_GHz[0],freqs_GHz[-1],'s','GHz','arbitrary units',hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],vmin=-2*np.std(data),vmax=5*np.std(data),log_colorbar=False)
+    mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
+    mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+    plot_ds(data,times,freqs_GHz,hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],time_unit='s',freq_unit='GHz',flux_unit='arbitrary units',vmin=np.mean(data)-2*np.std(data),vmax=np.mean(data)+5*np.std(data),log_colorbar=False,cmap=hotpotato['cmap'],mask_chans=mask_chans)
 
     # Update header to reflect data properties.
     hdr.primary.pop('hdr_size', None)
@@ -142,12 +143,32 @@ def myexecute(hotpotato):
     hdr.primary['nchans'] = len(freqs_GHz)
     hdr.primary['nifs'] = 1
     hdr.primary['tsamp'] = times[1] - times[0]
-    hdr.primary['rawdatafile'] = hotpotato['fil_file']
     hdr.primary['nbits'] = 32 # Cast data to np.float32 type.
+
+    # Write data to either .npz file or a filterbank file.
+    if hotpotato['do_write']:
+        if hotpotato['write_format']=='npz':
+            write_npz(data, freqs_GHz, times, mask_chans, hotpotato)
+        elif hotpotato['write_format']=='fil' or hotpotato['write_format']=='filterbank':
+            write_fil(data, times, freqs_GHz, hdr, hotpotato)
+        else:
+            print('File write format not recognized. Terminating program execution.')
+
+    return data, freqs_GHz, times
+
+# Write data priducts to npz file.
+def write_npz(data, freqs_GHz, times, mask_chans, hotpotato):
+    npz_filename = hotpotato['OUTPUT_DIR'] + '/' + hotpotato['basename'] + '_t%.2fto%.2f_freqs%.2fto%.2f'% (times[0], times[-1], freqs_GHz[0], freqs_GHz[-1])
+    save_array = [data, freqs_GHz, times, mask_chans]
+    save_keywords = ['DS', 'Radio frequency (GHz)', 'Time (s)', 'Channel mask']
+    np.savez(npz_filename,**{name:value for name, value in zip(save_keywords, save_array)})
+
+# Write data products to filterbank format.
+def write_fil(data, times, freqs_GHz, hdr, hotpotato):
     # Reshape data array.
     data = data.T.reshape((data.T.shape[0], 1, data.T.shape[1])) # New shape = (No. of time samples, No. of polarizations, No. of channels)
     # Construct a Waterfall object that will be written to disk as a filterbank file.
-    base_fileout = hotpotato['basename']+'_tstart%.2f_tstop%.2f_dsamp.fil'% (hotpotato['start_time'], hotpotato['end_time'])
+    base_fileout = hotpotato['basename']+'_t%.2fto%.2f_freqs%.2fto%.2f'% (times[0], times[-1], freqs_GHz[0], freqs_GHz[-1]) +'.fil'
     filename_out = hotpotato['OUTPUT_DIR']+'/'+base_fileout
     wat = Waterfall() # Empty Waterfall object
     wat.header = hdr.primary
@@ -155,7 +176,6 @@ def myexecute(hotpotato):
         print('Writing smoothed data to %s'% (base_fileout))
         fh.write(generate_sigproc_header(wat)) # Trick Blimpy into writing a sigproc header.
         np.float32(data.ravel()).tofile(fh)
-    return data, freqs_GHz, times
 
 # Set defaults.
 def set_defaults(hotpotato):
@@ -163,6 +183,10 @@ def set_defaults(hotpotato):
         hotpotato['OUTPUT_DIR'] = hotpotato['DATA_DIR']
     if hotpotato['show_plot']=='':
         hotpotato['show_plot'] = False
+    if hotpotato['do_write']=='':
+        hotpotato['do_write'] = False
+    if hotpotato['write_format']=='':
+        hotpotato['write_format'] = 'npz'
     if hotpotato['pol']=='':
         hotpotato['pol'] = 0
     if hotpotato['apply_rfimask']=='':
@@ -208,7 +232,7 @@ def main():
     run_time = (prog_end_time - prog_start_time)/60.0
     print('Code run time = %.5f minutes'% (run_time))
 
-    return data[:,0,:].T, freqs_GHz, times, hotpotato
+    return data, freqs_GHz, times, hotpotato
 #########################################################################
 if __name__=='__main__':
     data, freqs_GHz, times, hotpotato = main()
