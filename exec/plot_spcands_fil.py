@@ -68,11 +68,6 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, met
         data[indices_zero_bp] = replace_value
     data = correct_bandpass(data, hotpotato['median_bp'])
 
-    # Remove zerodm signal.
-    if hotpotato['remove_zerodm']:
-        data = remove_additive_time_noise(data)[0]
-        print('RANK %d: Zerodm removal completed.'% (rank))
-
     # Apply rfifind mask on data.
     if hotpotato['apply_rfimask']:
         idx1 = np.where(int_times<=times[0])[0][-1]
@@ -94,6 +89,16 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, met
         # Replaced masked entries with mean value.
         print('RANK %d: Replacing masked entries with mean values'% (rank))
         data = np.ma.filled(data, fill_value=np.nanmean(data))
+        # Set up list of channels to mask in downsampled data.
+        mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
+        mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+    else:
+        mask_chans = None
+
+    # Remove zerodm signal.
+    if hotpotato['remove_zerodm']:
+        data = remove_additive_time_noise(data)[0]
+        print('RANK %d: Zerodm removal completed.'% (rank))
 
     # Smooth and/or downsample the data.
     kernel_size_time_samples = hotpotato['downsamp_time'][np.where(np.array(hotpotato['low_dm_cats'])<=DM)[0][-1]]
@@ -102,22 +107,46 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, met
         data, freqs_GHz_smoothed, times = smooth_master(data,'Blockavg2D',hotpotato['convolution_method'],hotpotato['kernel_size_freq_chans'],kernel_size_time_samples,freqs_GHz_smoothed,times)
 
     # Remove residual spectral trend.
+    print('RANK %d: Residual spectral trend subtracted.'% (rank))
     data = data - np.median(data,axis=1)[:,None]
+
+    # Remove any residual temporal trend.
+    if hotpotato['remove_zerodm']:
+        data = data - np.median(data,axis=0)[None,:]
+        if mask_chans is not None:
+            data[mask_chans] = 0.0
+        print('RANK %d: Zerodm removal completed.'% (rank))
+
+    # Clip off masked channels at edges of the frequency band.
+    if mask_chans is not None:
+        # Lowest channel not to be masked.
+        low_ch_index = 0
+        while low_ch_index+1 in mask_chans:
+            low_ch_index += 1
+        # Highest channel not to be masked.
+        high_ch_index = len(freqs_GHz)-1
+        while high_ch_index in mask_chans:
+            high_ch_index -= 1
+        freqs_GHz = freqs_GHz[low_ch_index:high_ch_index+1]
+        data = data[low_ch_index:high_ch_index+1]
+        # Modify channel mask to reflect properties of updated data range.
+        mask_chans = np.delete(mask_chans, np.where(mask_chans<low_ch_index))
+        mask_chans = np.delete(mask_chans, np.where(mask_chans>high_ch_index))
+        mask_chans = np.array(mask_chans - low_ch_index, dtype=int)
 
     # Dedisperse the data at DM of candidate detection.
     dedisp_ds, dedisp_times, dedisp_timeseries = dedisperse_ds(data, freqs_GHz_smoothed, DM, freqs_GHz_smoothed[-1], freqs_GHz_smoothed[0], times[1]-times[0], times[0])
 
-    # Smooth dedispersed dynamic spectrum and dedispersed time series with a boxcar matched-filter of size "downfact" samples.
-    filter = boxcar(int(downfact)) # A uniform (boxcar) filter with a width equal to downfact
-    filter = filter/np.sum(filter) # Normalize filter to unit integral.
-    print('RANK %d: Convolving dedispersed dynamic spectrum along time with a Boxcar matched filter of width %d bins'% (rank, downfact))
-    dedisp_ds = convolve1d(dedisp_ds, filter, axis=-1) # Smoothed dedispersed dynamic spectrum
-    dedisp_timeseries = np.sum(dedisp_ds,axis=0)
+    # Smooth dedispersed dynamic spectrum and dedispersed time series using a boxcar matched-filter of size "downfact" samples.
+    if hotpotato['do_smooth_dedisp']:
+        filter = boxcar(int(downfact)) # A uniform (boxcar) filter with a width equal to downfact
+        filter = filter/np.sum(filter) # Normalize filter to unit integral.
+        print('RANK %d: Convolving dedispersed dynamic spectrum along time with a Boxcar matched filter of width %d bins'% (rank, downfact))
+        dedisp_ds = convolve1d(dedisp_ds, filter, axis=-1) # Smoothed dedispersed dynamic spectrum
+        dedisp_timeseries = np.sum(dedisp_ds,axis=0)
 
     # Candidate verification plot
-    mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
-    mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
-    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], mask_chans=mask_chans, vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'])
+    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], mask_chans=mask_chans, vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'], do_smooth_dedisp=hotpotato['do_smooth_dedisp'], filter_width=int(downfact))
 
     # Write smoothed dynamic spectrum to disk as .npz file.
     if hotpotato['write_npz']:
@@ -205,6 +234,8 @@ def set_defaults(hotpotato):
         hotpotato['low_dm_cats'] = [0.]
     if hotpotato['downsamp_time']=='':
         hotpotato['downsamp_time'] = [1]
+    if hotpotato['do_smooth_dedisp']=='':
+        hotpotato['do_smooth_dedisp'] = False        
     return hotpotato
 #########################################################################
 # MAIN MPI function

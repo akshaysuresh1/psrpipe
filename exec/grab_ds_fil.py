@@ -91,10 +91,6 @@ def myexecute(hotpotato):
         data[indices_zero_bp] = replace_value
     data = correct_bandpass(data, median_bp)
 
-    # Remove zerodm signal.
-    if hotpotato['remove_zerodm']:
-        data = remove_additive_time_noise(data)[0]
-
     # Read and apply rfifind mask.
     if hotpotato['apply_rfimask']:
         print('Reading rfifind mask %s'% (hotpotato['rfimask']))
@@ -120,6 +116,15 @@ def myexecute(hotpotato):
         # Replaced masked entries with mean value.
         print('Replacing masked entries with mean values')
         data = np.ma.filled(data, fill_value=np.nanmean(data))
+        # Set up list of channels to mask in downsampled data.
+        mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
+        mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+    else:
+        mask_chans = None
+
+    # Remove zerodm signal.
+    if hotpotato['remove_zerodm']:
+        data = remove_additive_time_noise(data)[0]
 
     # Smooth and/or downsample the data.
     data, freqs_GHz, times = smooth_master(data,hotpotato['smoothing_method'],hotpotato['convolution_method'],hotpotato['kernel_size_freq_chans'],hotpotato['kernel_size_time_samples'],freqs_GHz,times)
@@ -127,13 +132,37 @@ def myexecute(hotpotato):
         data, freqs_GHz, times = smooth_master(data,'Blockavg2D',hotpotato['convolution_method'],hotpotato['kernel_size_freq_chans'],hotpotato['kernel_size_time_samples'],freqs_GHz,times)
 
     # Remove residual spectral trend.
+    print('Removing residual spectral trend')
     data = data - np.median(data,axis=1)[:,None]
+
+    # Remove any residual temporal trend.
+    if hotpotato['remove_zerodm']:
+        data = data - np.median(data, axis=0)[None,:]
+        if mask_chans is not None:
+            data[mask_chans] = 0.0
+        print('Zerodm removal completed.')
+
+    # Clip off masked channels at edges of the frequency band.
+    if mask_chans is not None:
+        # Lowest channel not to be masked.
+        low_ch_index = 0
+        while low_ch_index+1 in mask_chans:
+            low_ch_index += 1
+        # Highest channel not to be masked.
+        high_ch_index = len(freqs_GHz)-1
+        while high_ch_index in mask_chans:
+            high_ch_index -= 1
+        freqs_GHz = freqs_GHz[low_ch_index:high_ch_index+1]
+        data = data[low_ch_index:high_ch_index+1]
+        # Modify channel mask to reflect properties of updated data range.
+        mask_chans = np.delete(mask_chans, np.where(mask_chans<low_ch_index))
+        mask_chans = np.delete(mask_chans, np.where(mask_chans>high_ch_index))
+        mask_chans = np.array(mask_chans - low_ch_index, dtype=int)
 
     # Produce imshow plot of data.
     if not os.path.isdir(hotpotato['OUTPUT_DIR']):
         os.makedirs(hotpotato['OUTPUT_DIR'])
-    mask_zap_check = list(np.sort(mask_zap_chans)//hotpotato['kernel_size_freq_chans'])
-    mask_chans = np.array([chan for chan in np.unique(mask_zap_check) if mask_zap_check.count(chan)==hotpotato['kernel_size_freq_chans']])
+
     plot_ds(data,times,freqs_GHz,hotpotato['OUTPUT_DIR']+'/'+hotpotato['basename'],show_plot=hotpotato['show_plot'],time_unit='s',freq_unit='GHz',flux_unit='arbitrary units',vmin=np.mean(data)-2*np.std(data),vmax=np.mean(data)+5*np.std(data),log_colorbar=False,cmap=hotpotato['cmap'],mask_chans=mask_chans)
 
     # Update header to reflect data properties.
