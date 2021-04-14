@@ -112,7 +112,7 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, met
     if hotpotato['remove_zerodm']:
         data = data - np.median(data,axis=0)[None,:]
         if mask_chans is not None:
-            data[mask_chans] = 0.0
+            data[mask_chans.astype(int)] = 0.0
         print('RANK %d: Zerodm removal completed.'% (rank))
 
     # Clip off masked channels at edges of the frequency band.
@@ -144,7 +144,7 @@ def myexecute(cand_index, cand_DMs, cand_sigma, cand_dedisp_times, downfact, met
         dedisp_timeseries = np.sum(dedisp_ds,axis=0)
 
     # Candidate verification plot
-    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], mask_chans=mask_chans, vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'], do_smooth_dedisp=hotpotato['do_smooth_dedisp'], filter_width=int(downfact))
+    spcand_verification_plot(cand_index, cand_dedisp_times, cand_DMs, cand_sigma, metadata, data, times, freqs_GHz_smoothed, dedisp_ds, dedisp_timeseries, dedisp_times, SAVE_DIR=hotpotato['OUTPUT_DIR'], output_formats=hotpotato['output_formats'], show_plot=hotpotato['show_plot'], low_DM_cand=hotpotato['low_DM_cand'], high_DM_cand=hotpotato['high_DM_cand'], low_time_plot=hotpotato['low_time_plot'], high_time_plot=hotpotato['high_time_plot'], mask_chans=mask_chans, vmin=np.mean(data)-2*np.std(data), vmax=np.mean(data)+5*np.std(data), cmap=hotpotato['cmap'], do_smooth_dedisp=hotpotato['do_smooth_dedisp'], filter_width=int(downfact))
 
     # Write smoothed dynamic spectrum to disk as .npz file.
     if hotpotato['write_npz']:
@@ -193,7 +193,7 @@ def filter_spcands(hotpotato):
     # Remove duplicate candidates associated with the same single pulse event.
     print('Removing duplicate candidates using a time margin of %.2f ms and a DM margin of %.1f pc/cc'% (hotpotato['time_margin']*1e3, hotpotato['DM_margin']))
     cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact,select_indices = remove_duplicates(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact,hotpotato['time_margin'],hotpotato['DM_margin'])
-    plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], select_indices)
+    plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], hotpotato['low_time_plot'], hotpotato['high_time_plot'], select_indices)
     print('Total number of unique candidates: %d'% (len(select_indices)))
     return metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact, select_indices
 
@@ -209,10 +209,14 @@ def set_defaults(hotpotato):
         hotpotato['show_plot'] = False
     if hotpotato['write_npz']=='':
         hotpotato['write_npz'] = False
+    if hotpotato['low_time_plot']=='':
+        hotpotato['low_time_plot'] = None
+    if hotpotato['high_time_plot']=='':
+        hotpotato['high_time_plot'] = None
     if hotpotato['t_before']=='':
         hotpotato['t_before'] = None
     if hotpotato['t_after']=='':
-        hotpotato['t_after'] = None        
+        hotpotato['t_after'] = None
     if hotpotato['pol']=='':
         hotpotato['pol'] = 0
     if hotpotato['apply_rfimask']=='':

@@ -138,9 +138,10 @@ def myexecute(hotpotato):
     # Remove any residual temporal trend.
     if hotpotato['remove_zerodm']:
         data = data - np.median(data, axis=0)[None,:]
-        if mask_chans is not None:
-            data[mask_chans] = 0.0
         print('Zerodm removal completed.')
+
+    if mask_chans is not None:
+        data[mask_chans] = 0.0
 
     # Clip off masked channels at edges of the frequency band.
     if mask_chans is not None:
