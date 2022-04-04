@@ -197,7 +197,7 @@ def filter_spcands(hotpotato):
     cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact, select_indices = remove_duplicates(cand_DMs,cand_sigma,cand_dedisp_times,cand_dedisp_samples,cand_downfact,hotpotato['time_margin'],hotpotato['DM_margin'])
     print('Total number of unique candidates: %d'% (len(select_indices)))
     if len(select_indices)!=0:
-        plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], select_indices)
+        plot_DMtime(cand_dedisp_times, cand_DMs, cand_sigma, metadata, hotpotato['OUTPUT_DIR'], hotpotato['output_formats'], hotpotato['show_plot'], hotpotato['low_DM_cand'], hotpotato['high_DM_cand'], hotpotato['low_time_plot'], hotpotato['high_time_plot'], select_indices)
     return metadata, cand_DMs, cand_sigma, cand_dedisp_times, cand_dedisp_samples, cand_downfact, select_indices
 
 # Set defaults.
@@ -210,6 +210,10 @@ def set_defaults(hotpotato):
         hotpotato['cmap']='viridis'
     if hotpotato['show_plot']=='':
         hotpotato['show_plot'] = False
+    if hotpotato['low_time_plot']=='':
+        hotpotato['low_time_plot'] = None
+    if hotpotato['high_time_plot']=='':
+        hotpotato['high_time_plot'] = None            
     if hotpotato['write_npz']=='':
         hotpotato['write_npz'] = False
     if hotpotato['t_before']=='':
@@ -235,7 +239,7 @@ def set_defaults(hotpotato):
     if hotpotato['downsamp_time']=='':
         hotpotato['downsamp_time'] = [1]
     if hotpotato['do_smooth_dedisp']=='':
-        hotpotato['do_smooth_dedisp'] = False        
+        hotpotato['do_smooth_dedisp'] = False
     return hotpotato
 #########################################################################
 # MAIN MPI function
